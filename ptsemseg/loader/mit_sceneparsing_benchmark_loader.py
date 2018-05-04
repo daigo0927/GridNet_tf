@@ -70,7 +70,11 @@ class MITSceneParsingBenchmarkLoader(data.Dataset):
         lbl = np.array(lbl, dtype=np.uint8)
 
         if self.augmentations is not None:
-            img, lbl = self.augmentations(img, lbl)
+            try:
+                img, lbl = self.augmentations(img, lbl)
+            except TypeError:
+                pass
+                # print(img_path, img.shape, lbl.shape)
 
         if self.is_transform:
             img, lbl = self.transform(img, lbl)
@@ -84,7 +88,11 @@ class MITSceneParsingBenchmarkLoader(data.Dataset):
         :param lbl:
         """
         img = m.imresize(img, (self.img_size[0], self.img_size[1])) # uint8 with RGB mode
-        img = img[:, :, ::-1] # RGB -> BGR
+        try:
+            img = img[:, :, ::-1] # RGB -> BGR
+        except IndexError:
+            img = np.stack([img, img, img], axis = 2)
+            
         img = img.astype(np.float64)
         img -= self.mean
         if self.img_norm:

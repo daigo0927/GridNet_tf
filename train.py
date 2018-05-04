@@ -31,12 +31,12 @@ class Trainer(object):
         data_loader = get_loader(args.dataset)
         data_path = args.dataset_dir
         t_loader = data_loader(data_path, is_transform = True,
-                                    img_size = (args.img_rows, args.img_cols),
-                                    augmentations = data_aug, img_norm = args.img_norm)
+                               img_size = (args.img_rows, args.img_cols),
+                               augmentations = data_aug, img_norm = args.img_norm)
         v_loader = data_loader(data_path, is_transform = True,
-                                    split = 'validation',
-                                    img_size = (args.img_rows, args.img_cols),
-                                    img_norm = args.img_norm)
+                               split = 'validation',
+                               img_size = (args.img_rows, args.img_cols),
+                               img_norm = args.img_norm)
         self.n_classes = t_loader.n_classes
         self.num_batches = int(len(t_loader.files['training'])/args.batch_size)
         self.trainloader = data.DataLoader(t_loader, batch_size = args.batch_size, shuffle = True)
@@ -85,7 +85,7 @@ class Trainer(object):
                                                                self.labels : labels_val})
                 loss_vals.append(loss_val)
                 acc_vals.append(acc_val)
-            print(f'\r{e} epoch validation loss: {np.mean(loss_vals)}, acc: {np.mean(acc_vals)}')
+            print(f'\r{e+1} epoch validation loss: {np.mean(loss_vals)}, acc: {np.mean(acc_vals)}')
 
             if not os.path.exists('./model_tf'):
                 os.mkdir('./model_tf')
