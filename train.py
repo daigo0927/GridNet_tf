@@ -85,7 +85,7 @@ class Trainer(object):
                                                                self.labels : labels_val})
                 loss_vals.append(loss_val)
                 acc_vals.append(acc_val)
-            print(f'{e} epoch validation loss: {np.mean(loss_vals)}, acc: {np.mean(acc_vals)}')
+            print(f'\r{e} epoch validation loss: {np.mean(loss_vals)}, acc: {np.mean(acc_vals)}')
 
             if not os.path.exists('./model_tf'):
                 os.mkdir('./model_tf')
