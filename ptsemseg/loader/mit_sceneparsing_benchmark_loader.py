@@ -99,8 +99,9 @@ class MITSceneParsingBenchmarkLoader(data.Dataset):
         lbl = m.imresize(lbl, (self.img_size[0], self.img_size[1]), 'nearest', mode='F')
         lbl = lbl.astype(int)
 
-        if not np.all(classes == np.unique(lbl)):
-            print("WARN: resizing labels yielded fewer classes")
+        # deactivate
+        # if not np.all(classes == np.unique(lbl)):
+        #     print("WARN: resizing labels yielded fewer classes")
 
         if not np.all(np.unique(lbl) < self.n_classes):
             raise ValueError("Segmentation map contained invalid class values")
