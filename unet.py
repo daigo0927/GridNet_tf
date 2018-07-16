@@ -1,26 +1,17 @@
 
 import tensorflow as tf
-import tensorflow.contrib.layers as tcl
 
-def _conv_relu(filters, kernel_size = (3, 3), stride = (1, 1)):
+def _conv_relu(filters, kernel_size = (3, 3), strides = (1, 1)):
     def f(inputs):
-        x = tcl.conv2d(inputs,
-                       num_outputs = filters,
-                       kernel_size = kernel_size,
-                       stride = stride,
-                       padding = 'SAME')
+        x = tf.layers.Conv2D(filters, kernel_size, strides, 'same')(inputs)
         x = tf.nn.relu(x)
         return x
     return f
 
-def _conv_bn_relu(filters, kernel_size = (3, 3), stride = (1, 1)):
+def _conv_bn_relu(filters, kernel_size = (3, 3), strides = (1, 1)):
     def f(inputs):
-        x = tcl.conv2d(inputs,
-                       num_outputs = filters,
-                       kernel_size = kernel_size,
-                       stride = stride,
-                       padding = 'SAME')
-        x = tcl.batch_norm(x)
+        x = tf.layers.Conv2D(filters, kernel_size, strides, 'same')(inputs)
+        x = tf.layers.BatchNormalization()(x)
         x = tf.nn.relu(x)
         return x
     return f
@@ -29,20 +20,13 @@ def down_block(block_fn, filters):
     def f(inputs):
         x = block_fn(filters)(inputs)
         x = block_fn(filters)(x)
-        down = tcl.max_pool2d(x,
-                              kernel_size = (3, 3),
-                              stride = (2, 2),
-                              padding = 'SAME')
+        down = tf.layers.MaxPooling2D((3, 3), (2, 2), 'same')(x)
         return x, down # x:same size of inputs, down: downscaled
     return f
 
 def up_block(block_fn, filters):
     def f(inputs, down):
-        inputs_ = tcl.conv2d_transpose(down, # double size of 'down'
-                                       num_outputs = inputs.shape.as_list()[3],
-                                       kernel_size = (3, 3),
-                                       stride = (2, 2),
-                                       padding = 'SAME')
+        inputs_ = tf.layers.Conv2DTranspose(filters, (3, 3), (2, 2), 'same')(down)
         x = tf.concat([inputs, inputs_], axis = 3)
         x = block_fn(filters)(x)
         x = block_fn(filters)(x)
@@ -75,12 +59,8 @@ class U_Net(object):
             up3 = up_block(self.block_fn, 256)(x3, down3)
             up2 = up_block(self.block_fn, 128)(x2, up3)
             up1 = up_block(self.block_fn, 64)(x1, up2)
-                
-            outputs = tcl.conv2d(up1,
-                                 num_outputs = self.output_ch,
-                                 kernel_size = (1, 1),
-                                 stride = (1, 1),
-                                 padding = 'SAME')
+
+            outputs = tf.layers.Conv2D(self.output_ch, (1, 1), (1, 1), 'same')(up1)
 
             return outputs
 

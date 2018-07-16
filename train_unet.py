@@ -29,27 +29,29 @@ class Trainer(object):
         # dataset config
         daug = Compose([RandomRotate(10),
                         RandomHorizontallyFlip()])
-        dset = get_loader(args.dataset)
-        dpath = args.dataset_dir
+        dset = get_loader(self.args.dataset)
+        dpath = self.args.dataset_dir
         tset = dset(dpath, is_transform = True,
-                    img_size = (args.img_rows, args.img_cols),
-                    augmentations = daug, img_norm = args.img_norm)
+                    img_size = (self.args.img_rows, self.args.img_cols),
+                    augmentations = daug, img_norm = self.args.img_norm)
         vset = dset(dpath, is_transform = True,
                     split = 'validation',
-                    img_size = (args.img_rows, args.img_cols),
-                    img_norm = args.img_norm)
+                    img_size = (self.args.img_rows, self.args.img_cols),
+                    img_norm = self.args.img_norm)
         
         self.n_classes = tset.n_classes
         self.num_batches = int(len(tset.files['training'])/self.args.batch_size)
-        self.tloader = data.DataLoader(tset, batch_size = self.args.batch_size, shuffle = True)
-        self.vloader = data.DataLoader(vset, batch_size = self.args.batch_size)
+        self.tloader = data.DataLoader(tset, batch_size = self.args.batch_size,
+                                       num_workers = 8, shuffle = True)
+        self.vloader = data.DataLoader(vset, batch_size = self.args.batch_size,
+                                       num_workers = 8)
 
     def _build_graph(self):
         self.images = tf.placeholder(tf.float32,
                                      shape = (None, self.args.img_rows, self.args.img_cols, 3))
         self.labels = tf.placeholder(tf.int32,
                                      shape = (None, self.args.img_rows, self.args.img_cols))
-        self.model = U_Net(output_ch = self.n_classes, block_fn = 'origin', name = 'unet')
+        self.model = U_Net(output_ch = self.n_classes, block_fn = 'batch_norm', name = 'unet')
         self.logits = self.model(self.images)
 
         self.loss, self.accuracy, self.preds \
@@ -119,7 +121,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--n_epoch', nargs = '?', type = int, default = 50,
                         help = '# of epochs')
-    parser.add_argument('--batch_size', nargs = '?', type = int, default = 8,
+    parser.add_argument('--batch_size', nargs = '?', type = int, default = 1,
                         help = 'Batch size')
 
     parser.add_argument('-v', '--visualize', action = 'store_true',
