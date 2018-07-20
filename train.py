@@ -9,49 +9,47 @@ from torch.utils import data
 
 from model import GridNet
 from loss import sparse_softmax_cross_entropy2d
-from utils import show_progress
+from utils import show_progress, vis_semseg
 
-from ptsemseg.loader import get_loader
-from ptsemseg.augmentations import *
-
-import pdb
+from datahandler.utils import get_dataset
 
 class Trainer(object):
-
     def __init__(self, args):
         self.args = args
-        self.sess = tf.Session()
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config = config)
         self._build_dataloader()
         self._build_graph()
 
     def _build_dataloader(self):
         # dataset config
-        data_aug = Compose([RandomRotate(10),
-                            RandomHorizontallyFlip()])
-        data_loader = get_loader(args.dataset)
-        data_path = args.dataset_dir
-        t_loader = data_loader(data_path, is_transform = True,
-                               img_size = (args.img_rows, args.img_cols),
-                               augmentations = data_aug, img_norm = args.img_norm)
-        v_loader = data_loader(data_path, is_transform = True,
-                               split = 'validation',
-                               img_size = (args.img_rows, args.img_cols),
-                               img_norm = args.img_norm)
-        self.n_classes = t_loader.n_classes
-        self.num_batches = int(len(t_loader.files['training'])/args.batch_size)
-        self.trainloader = data.DataLoader(t_loader, batch_size = args.batch_size, shuffle = True)
-        self.valloader = data.DataLoader(v_loader, batch_size = args.batch_size)
-
-    def _build_graph(self):
+        dataset = get_dataset(self.args.dataset)
+        dataset = get_dataset(self.args.dataset)
+        data_args = {'dataset_dir':self.args.dataset_dir,
+                     'cropper':self.args.crop_type, 'crop_shape':self.args.crop_shape,
+                     'resize_shape':self.args.resize_shape, 'resize_scale':self.args.resize_scale}
+        self.tset = dataset(train_or_val = 'train', **data_args)
+        vset = dataset(train_or_val = 'val', **data_args)
         
-        self.images = tf.placeholder(tf.float32,
-                                     shape = (None, self.args.img_rows, self.args.img_cols, 3))
-        self.labels = tf.placeholder(tf.int32,
-                                     shape = (None, self.args.img_rows, self.args.img_cols))
-        self.model = GridNet(filters_out = self.n_classes, filters_level = (32, 64, 96))
+        self.n_classes = self.tset.n_classes
+        self.num_batches = int(len(self.tset)/self.args.batch_size)
+        load_args = {'batch_size':self.args.batch_size, 'num_workers':self.args.num_workers,
+                     'pin_memory':True, 'drop_last':True}
+        self.tloader = data.DataLoader(self.tset, shuffle = True, **load_args)
+        self.vloader = data.DataLoader(vset, shuffle = False, **load_args)
+        
+    def _build_graph(self):
+        self.images = tf.placeholder(tf.float32, shape = [None]+self.args.image_size+[3],
+                                    name = 'images')
+        self.labels = tf.placeholder(tf.int32,   shape = [None]+self.args.image_size,
+                                    name = 'labels')
+        self.model = GridNet(filters_out = self.n_classes, filters_level = (32, 64, 96),
+                             name = 'gridnet')
         self.logits = self.model(self.images)
 
-        self.loss, self.accuracy = sparse_softmax_cross_entropy2d(self.labels, self.logits, name = 'loss')
+        self.loss, self.accuracy, self.preds \
+          = sparse_softmax_cross_entropy2d(self.labels, self.logits, name = 'loss')
 
         self.optimizer = tf.train.AdamOptimizer()\
                                  .minimize(self.loss, var_list = self.model.vars)
@@ -64,12 +62,11 @@ class Trainer(object):
             self.sess.run(tf.global_variables_initializer())
 
     def train(self):
-        
-        for e in range(args.n_epoch):
-            for i, (images, labels) in enumerate(self.trainloader):
-                images = np.transpose(images.numpy(), axes = (0, 2, 3, 1)) # transpose to channel last
+        for e in range(self.args.n_epoch):
+            for i, (images, labels) in enumerate(self.tloader):
+                images = images.numpy()/255.
                 labels = labels.numpy()
-
+             
                 _, loss, acc = self.sess.run([self.optimizer, self.loss, self.accuracy],
                                              feed_dict = {self.images : images,
                                                           self.labels : labels})
@@ -77,45 +74,68 @@ class Trainer(object):
                     show_progress(e+1, i+1, self.num_batches, loss, acc)
 
             loss_vals, acc_vals = [], []
-            for images_val, labels_val in self.valloader:
-                images_val = np.transpose(images_val.numpy(), axes = (0, 2, 3, 1))
-                labels_val = labels_val.numpy() # sparse (not onehot) labels
-                loss_val, acc_val = self.sess.run([self.loss, self.accuracy],
-                                                  feed_dict = {self.images : images_val,
-                                                               self.labels : labels_val})
+            for images_val, labels_val in self.vloader:
+                images_val = images_val.numpy()/255.
+                labels_val = labels_val.numpy()
+                loss_val, acc_val, preds_val = self.sess.run([self.loss, self.accuracy, self.preds],
+                                                             feed_dict = {self.images : images_val,
+                                                                          self.labels : labels_val})
                 loss_vals.append(loss_val)
                 acc_vals.append(acc_val)
+                
             print(f'\r{e+1} epoch validation loss: {np.mean(loss_vals)}, acc: {np.mean(acc_vals)}')
 
-            if not os.path.exists('./model_tf'):
-                os.mkdir('./model_tf')
-            self.saver.save(self.sess, f'./model_tf/model_{e}.ckpt')
+            if self.args.visualize:
+                if not os.path.exists('./figure_grid'):
+                    os.mkdir('./figure_grid')
+                image_v = images_val[0]
+                pred_v = self.tset.decode_segmap(preds_val[0])
+                label_v = self.tset.decode_segmap(labels_val[0])
+                vis_semseg(image_v, pred_v, label_v,
+                           filename = f'./figure_grid/seg_{str(e+1).zfill(3)}.pdf')
+
+            if not os.path.exists('./model_grid'):
+                os.mkdir('./model_grid')
+            self.saver.save(self.sess, f'./model_grid/model_{e}.ckpt')
                 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hyperparams')
-    parser.add_argument('--dataset', nargs='?', type=str, default='mit_sceneparsing_benchmark',
-                        help = 'Dataset to use [\'pascal, camvid, ade20k etc\']')
+    parser.add_argument('--dataset', type = str, default='CityScapes',
+                        help = 'Dataset to use [CityScapes, SYNTHIA, PlayingforData etc]')
     parser.add_argument('--dataset_dir', required = True, type = str,
                         help = 'Directory containing target dataset')
-    parser.add_argument('--img_rows', nargs='?', type=int, default=256,
-                        help = 'Height of the input')
-    parser.add_argument('--img_cols', nargs='?', type=int, default=256,
-                        help = 'Width of input')
+    parser.add_argument('--n_epoch', type = int, default = 50,
+                        help = '# of epochs [50]')
+    parser.add_argument('--batch_size', type = int, default = 4,
+                        help = 'Batch size [4]')
+    parser.add_argument('--num_workers', type = int, default = 4,
+                        help = '# of workers for data loading [4]')
 
-    parser.add_argument('--img_norm', dest = 'img_norm', action = 'store_true',
-                        help = 'Enable input images scales normalization [0, 1] | True by default')
-    parser.add_argument('--no-img_norm', dest = 'img_norm', action = 'store_false',
-                        help = 'Disable input images scales normalization [0, 1] | True by Default')
-    parser.set_defaults(img_norm = True)
-    
-    parser.add_argument('--n_epoch', nargs = '?', type = int, default = 100,
-                        help = '# of epochs')
-    parser.add_argument('--batch_size', nargs = '?', type = int, default = 8,
-                        help = 'Batch size')
+    parser.add_argument('--crop_type', type = str, default = 'random',
+                        help = 'Crop type for raw image data [random]')
+    parser.add_argument('--crop_shape', nargs = 2, type = int, default = None,
+                        help = 'Crop shape for raw image data [None]')
+    parser.add_argument('--resize_shape', nargs = 2, type = int, default = [256, 512],
+                        help = 'Resize shape for raw image data [256, 512]')
+    parser.add_argument('--resize_scale', nargs = 2, type = int, default = None,
+                        help = 'Resize scale for raw image data [None]')
+    parser.add_argument('--image_size', nargs = 2, type = int, default = [256, 512],
+                        help = 'Image size to be processed [256, 512]')
 
-    parser.add_argument('--resume', nargs = '?', type = str, default = None,
-                        help = 'Path to previous saved model to restart from')
+    parser.add_argument('-bn', '--batch_norm', dest = 'batch_norm', action = 'store_true',
+                        help = 'Enable batch normalization, [enabled] as default.')
+    parser.add_argument('--no-batch_norm', dest = 'batch_norm', action = 'store_false',
+                        help = 'Disable batch normalization, [enabled] as default.')
+    parser.set_defaults(batch_norm = True)
+
+    parser.add_argument('-v', '--visualize', dest = 'visualize', action = 'store_true',
+                        help = 'Enable to visualize estimated segmentation, [enabled] as default.')
+    parser.add_argument('--no-visualize', dest = 'visualize', action = 'store_false',
+                        help = 'Disable to visualize estimated segmentation, [enabled] as default.')
+    parser.set_defaults(visualize = True)
+    parser.add_argument('--resume', type = str, default = None,
+                        help = 'Path to previous saved model to restart from [None]')
 
     args = parser.parse_args()
     for key, item in vars(args).items():
