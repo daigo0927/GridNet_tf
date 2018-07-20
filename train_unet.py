@@ -13,7 +13,6 @@ from utils import show_progress, vis_semseg
 
 from datahandler.utils import get_dataset
 
-import pdb
 
 class Trainer(object):
     def __init__(self, args):
@@ -114,8 +113,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--crop_type', type = str, default = 'random',
                         help = 'Crop type for raw image data [random]')
-    parser.add_argument('--crop_shape', nargs = 2, type = int, default = [512, 1024],
-                        help = 'Crop shape for raw image data [512, 1024]')
+    parser.add_argument('--crop_shape', nargs = 2, type = int, default = None,
+                        help = 'Crop shape for raw image data [None]')
     parser.add_argument('--resize_shape', nargs = 2, type = int, default = [256, 512],
                         help = 'Resize shape for raw image data [256, 512]')
     parser.add_argument('--resize_scale', nargs = 2, type = int, default = None,
@@ -145,30 +144,3 @@ if __name__ == '__main__':
         
     trainer = Trainer(args)
     trainer.train()
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-                    

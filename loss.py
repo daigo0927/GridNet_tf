@@ -1,5 +1,4 @@
 import tensorflow as tf
-import pdb
 
 def sparse_softmax_cross_entropy2d(labels2d, logits2d, name = 'loss'):
     with tf.name_scope(name) as ns:
