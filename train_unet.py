@@ -11,8 +11,7 @@ from unet import U_Net
 from loss import sparse_softmax_cross_entropy2d
 from utils import show_progress, vis_semseg
 
-from ptsemseg.loader import get_loader
-from ptsemseg.augmentations import *
+from datahandler.utils import get_dataset
 
 import pdb
 
@@ -27,31 +26,26 @@ class Trainer(object):
 
     def _build_dataloader(self):
         # dataset config
-        daug = Compose([RandomRotate(10),
-                        RandomHorizontallyFlip()])
-        dset = get_loader(self.args.dataset)
-        dpath = self.args.dataset_dir
-        tset = dset(dpath, is_transform = True,
-                    img_size = (self.args.img_rows, self.args.img_cols),
-                    augmentations = daug, img_norm = self.args.img_norm)
-        vset = dset(dpath, is_transform = True,
-                    split = 'validation',
-                    img_size = (self.args.img_rows, self.args.img_cols),
-                    img_norm = self.args.img_norm)
+        dataset = get_dataset(self.args.dataset)
+        data_args = {'dataset_dir':self.args.dataset_dir,
+                     'cropper':self.args.crop_type, 'crop_shape':self.args.crop_shape,
+                     'resize_shape':self.args.resize_shape, 'resize_scale':self.args.resize_scale}
+        self.tset = dataset(train_or_val = 'train', **data_args)
+        vset = dataset(train_or_val = 'val', **data_args)
         
-        self.n_classes = tset.n_classes
-        self.num_batches = int(len(tset.files['training'])/self.args.batch_size)
-        self.tloader = data.DataLoader(tset, batch_size = self.args.batch_size,
-                                       num_workers = 8, shuffle = True)
-        self.vloader = data.DataLoader(vset, batch_size = self.args.batch_size,
-                                       num_workers = 8)
+        self.n_classes = self.tset.n_classes
+        self.num_batches = int(len(self.tset)/self.args.batch_size)
+        load_args = {'batch_size':self.args.batch_size, 'num_workers':self.args.num_workers,
+                     'pin_memory':True, 'drop_last':True}
+        self.tloader = data.DataLoader(self.tset, shuffle = True, **load_args)
+        self.vloader = data.DataLoader(vset, shuffle = False, **load_args)
 
     def _build_graph(self):
-        self.images = tf.placeholder(tf.float32,
-                                     shape = (None, self.args.img_rows, self.args.img_cols, 3))
-        self.labels = tf.placeholder(tf.int32,
-                                     shape = (None, self.args.img_rows, self.args.img_cols))
-        self.model = U_Net(output_ch = self.n_classes, block_fn = 'batch_norm', name = 'unet')
+        self.images = tf.placeholder(tf.float32, shape = [None]+self.args.image_size+[3],
+                                    name = 'images')
+        self.labels = tf.placeholder(tf.int32,   shape = [None]+self.args.image_size,
+                                    name = 'labels')
+        self.model = U_Net(output_ch = self.n_classes, batch_norm = self.args.batch_norm, name = 'unet')
         self.logits = self.model(self.images)
 
         self.loss, self.accuracy, self.preds \
@@ -70,7 +64,7 @@ class Trainer(object):
     def train(self):
         for e in range(args.n_epoch):
             for i, (images, labels) in enumerate(self.tloader):
-                images = np.transpose(images.numpy(), axes = (0, 2, 3, 1)) # transpose to channel last
+                images = images.numpy()/255.
                 labels = labels.numpy()
 
                 _, loss, acc = self.sess.run([self.optimizer, self.loss, self.accuracy],
@@ -81,7 +75,7 @@ class Trainer(object):
 
             loss_vals, acc_vals = [], []
             for images_val, labels_val in self.vloader:
-                images_val = np.transpose(images_val.numpy(), axes = (0, 2, 3, 1))
+                images_val = images_val.numpy()/255.
                 labels_val = labels_val.numpy() # sparse (not onehot) labels
                 loss_val, acc_val, preds_val = self.sess.run([self.loss, self.accuracy, self.preds],
                                                              feed_dict = {self.images : images_val,
@@ -94,7 +88,10 @@ class Trainer(object):
             if self.args.visualize:
                 if not os.path.exists('./figure_unet'):
                     os.mkdir('./figure_unet')
-                vis_semseg(images_val[0], preds_val[0], labels_val[0],
+                image_v = images_val[0]
+                pred_v = self.tset.decode_segmap(preds_val[0])
+                label_v = self.tset.decode_segmap(labels_val[0])
+                vis_semseg(image_v, pred_v, label_v,
                            filename = f'./figure_unet/seg_{str(e+1).zfill(3)}.pdf')
             
             if not os.path.exists('./model_unet'):
@@ -104,30 +101,41 @@ class Trainer(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hyperparams')
-    parser.add_argument('--dataset', nargs='?', type=str, default='mit_sceneparsing_benchmark',
-                        help = 'Dataset to use [\'pascal, camvid, ade20k etc\']')
+    parser.add_argument('--dataset', type = str, default='CityScapes',
+                        help = 'Dataset to use [CityScapes, SYNTHIA, PlayingforData etc]')
     parser.add_argument('--dataset_dir', required = True, type = str,
                         help = 'Directory containing target dataset')
-    parser.add_argument('--img_rows', nargs='?', type=int, default=256,
-                        help = 'Height of the input')
-    parser.add_argument('--img_cols', nargs='?', type=int, default=256,
-                        help = 'Width of input')
+    parser.add_argument('--n_epoch', type = int, default = 50,
+                        help = '# of epochs [50]')
+    parser.add_argument('--batch_size', type = int, default = 4,
+                        help = 'Batch size [4]')
+    parser.add_argument('--num_workers', type = int, default = 4,
+                        help = '# of workers for data loading [4]')
 
-    parser.add_argument('--img_norm', dest = 'img_norm', action = 'store_true',
-                        help = 'Enable input images scales normalization [0, 1] | True by default')
-    parser.add_argument('--no-img_norm', dest = 'img_norm', action = 'store_false',
-                        help = 'Disable input images scales normalization [0, 1] | True by Default')
-    parser.set_defaults(img_norm = True)
-    
-    parser.add_argument('--n_epoch', nargs = '?', type = int, default = 50,
-                        help = '# of epochs')
-    parser.add_argument('--batch_size', nargs = '?', type = int, default = 1,
-                        help = 'Batch size')
+    parser.add_argument('--crop_type', type = str, default = 'random',
+                        help = 'Crop type for raw image data [random]')
+    parser.add_argument('--crop_shape', nargs = 2, type = int, default = [512, 1024],
+                        help = 'Crop shape for raw image data [512, 1024]')
+    parser.add_argument('--resize_shape', nargs = 2, type = int, default = [256, 512],
+                        help = 'Resize shape for raw image data [256, 512]')
+    parser.add_argument('--resize_scale', nargs = 2, type = int, default = None,
+                        help = 'Resize scale for raw image data [None]')
+    parser.add_argument('--image_size', nargs = 2, type = int, default = [256, 512],
+                        help = 'Image size to be processed [256, 512]')
 
-    parser.add_argument('-v', '--visualize', action = 'store_true',
-                        help = 'Stored option for visualize estimated segmentation')
-    parser.add_argument('--resume', nargs = '?', type = str, default = None,
-                        help = 'Path to previous saved model to restart from')
+    parser.add_argument('-bn', '--batch_norm', dest = 'batch_norm', action = 'store_true',
+                        help = 'Enable batch normalization, [enabled] as default.')
+    parser.add_argument('--no-batch_norm', dest = 'batch_norm', action = 'store_false',
+                        help = 'Disable batch normalization, [enabled] as default.')
+    parser.set_defaults(batch_norm = True)
+
+    parser.add_argument('-v', '--visualize', dest = 'visualize', action = 'store_true',
+                        help = 'Enable to visualize estimated segmentation, [enabled] as default.')
+    parser.add_argument('--no-visualize', dest = 'visualize', action = 'store_false',
+                        help = 'Disable to visualize estimated segmentation, [enabled] as default.')
+    parser.set_defaults(visualize = True)
+    parser.add_argument('--resume', type = str, default = None,
+                        help = 'Path to previous saved model to restart from [None]')
 
     args = parser.parse_args()
     for key, item in vars(args).items():

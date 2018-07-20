@@ -36,15 +36,14 @@ def up_block(block_fn, filters):
 class U_Net(object):
     def __init__(self,
                  output_ch, # outputs channel, size is same as inputs
-                 block_fn = 'origin',
+                 batch_norm = True,
                  name = 'unet'):
         self.output_ch = output_ch
         self.name = name
 
-        assert block_fn in ['batch_norm', 'origin'], 'choose \'batch_norm\' or \'origin\''
-        if block_fn == 'batch_norm':
+        if batch_norm:
             self.block_fn = _conv_bn_relu
-        elif block_fn == 'origin':
+        else:
             self.block_fn = _conv_relu
             
     def __call__(self, images):
@@ -61,7 +60,6 @@ class U_Net(object):
             up1 = up_block(self.block_fn, 64)(x1, up2)
 
             outputs = tf.layers.Conv2D(self.output_ch, (1, 1), (1, 1), 'same')(up1)
-
             return outputs
 
     @property
